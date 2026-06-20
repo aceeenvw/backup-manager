@@ -1,0 +1,249 @@
+/* ⊹ BACKUP MANAGER ⊹ — aceenvw — export-only, theme-aware styling.
+ * Signature: the panel chrome (card surface, border, accent rail) only renders
+ * when [data-bm-build] is present (set in JS from the aceenvw build stamp).
+ * Removing the stamp strips the styling — it is a build/authorship marker, NOT a
+ * security feature. */
+
+#bm-root {
+    --bm-surface: color-mix(in srgb, var(--SmartThemeBlurTintColor, rgba(20, 20, 24, 0.96)) 86%, rgba(255, 255, 255, 0.04) 14%);
+    --bm-surface-strong: color-mix(in srgb, var(--SmartThemeBlurTintColor, rgba(20, 20, 24, 0.98)) 78%, rgba(255, 255, 255, 0.09) 22%);
+    --bm-border: color-mix(in srgb, var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.16)) 78%, rgba(255, 255, 255, 0.12) 22%);
+    --bm-accent: var(--SmartThemeQuoteColor, #6aa9ff);
+    --bm-accent-soft: color-mix(in srgb, var(--SmartThemeQuoteColor, #6aa9ff) 16%, transparent);
+    --bm-text: var(--SmartThemeBodyColor, #f2f0eb);
+    --bm-muted: color-mix(in srgb, var(--SmartThemeBodyColor, #f2f0eb) 62%, var(--SmartThemeEmColor, #9b9b9b) 38%);
+    --bm-ok: #4cb782;
+    --bm-warn: #d8a93a;
+    --bm-danger: #e0645f;
+    --bm-radius: 12px;
+    color: var(--bm-text);
+}
+
+/* Panel chrome gated on the build stamp (signature). */
+#bm-root[data-bm-build] .bm-tab {
+    border: 1px solid var(--bm-border);
+    border-radius: 14px;
+    background:
+        linear-gradient(180deg, var(--bm-accent-soft) 0%, transparent 22%),
+        var(--bm-surface);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+}
+
+.bm-tab {
+    padding: 12px;
+    margin-top: 6px;
+    container-type: inline-size;
+    container-name: bm-panel;
+}
+
+#bm-root .bm-intro {
+    margin: 0 0 10px;
+    font-size: 0.84em;
+    color: var(--bm-muted);
+    line-height: 1.5;
+}
+
+/* ── Warning banner ── */
+#bm-root .bm-warning {
+    font-size: 0.8em;
+    margin: 0 0 12px;
+    padding: 9px 12px;
+    border-radius: var(--bm-radius);
+    border: 1px solid color-mix(in srgb, var(--bm-warn) 40%, var(--bm-border) 60%);
+    background: color-mix(in srgb, var(--bm-warn) 12%, var(--bm-surface-strong) 88%);
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    line-height: 1.45;
+}
+
+#bm-root .bm-warning i { color: var(--bm-warn); margin-top: 1px; }
+
+/* ── Buttons ── */
+#bm-root .bm-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    cursor: pointer;
+    color: var(--bm-text);
+    background: var(--bm-surface-strong);
+    border: 1px solid var(--bm-border);
+    border-radius: 999px;
+    font-size: 0.84em;
+    transition: border-color 0.15s ease, background 0.15s ease, transform 0.08s ease;
+}
+
+#bm-root .bm-btn:hover {
+    border-color: color-mix(in srgb, var(--bm-accent) 50%, var(--bm-border) 50%);
+}
+
+#bm-root .bm-btn:active { transform: scale(0.97); }
+
+#bm-root .bm-btn.primary {
+    background: var(--bm-accent);
+    border-color: var(--bm-accent);
+    color: #fff;
+    font-weight: 600;
+}
+
+#bm-root .bm-btn.primary:hover {
+    background: color-mix(in srgb, var(--bm-accent) 85%, #fff 15%);
+}
+
+#bm-root .bm-btn.danger {
+    color: var(--bm-danger);
+    border-color: color-mix(in srgb, var(--bm-danger) 50%, var(--bm-border) 50%);
+}
+
+#bm-root .bm-btn[disabled] {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* ── Selection bar ── */
+#bm-root .bm-selbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 0 0 10px;
+}
+
+/* ── Category list ── */
+#bm-root .bm-catlist {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 0 0 10px;
+    font-size: 0.88em;
+}
+
+#bm-root .bm-catrow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border: 1px solid var(--bm-border);
+    border-radius: 10px;
+    background: var(--bm-surface-strong);
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+#bm-root .bm-catrow:hover {
+    border-color: color-mix(in srgb, var(--bm-accent) 40%, var(--bm-border) 60%);
+}
+
+/* Selected (checked) row gets an accent wash. */
+#bm-root .bm-catrow:has(input:checked) {
+    border-color: color-mix(in srgb, var(--bm-accent) 55%, var(--bm-border) 45%);
+    background: color-mix(in srgb, var(--bm-accent) 12%, var(--bm-surface-strong) 88%);
+}
+
+#bm-root .bm-catrow.bm-disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+#bm-root .bm-catrow input[type="checkbox"] {
+    flex: 0 0 auto;
+    accent-color: var(--bm-accent);
+    width: 15px;
+    height: 15px;
+}
+
+#bm-root .bm-catname {
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#bm-root .bm-count {
+    flex: 0 0 auto;
+    color: var(--bm-muted);
+    min-width: 2.2em;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-size: 0.92em;
+}
+
+/* ── Status pills ── */
+#bm-root .bm-tag {
+    flex: 0 0 auto;
+    font-size: 0.72em;
+    padding: 2px 9px;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border: 1px solid transparent;
+    white-space: nowrap;
+}
+
+#bm-root .bm-tag.safe   { background: color-mix(in srgb, var(--bm-ok) 22%, transparent);     color: color-mix(in srgb, var(--bm-ok) 80%, var(--bm-text) 20%); }
+#bm-root .bm-tag.warn   { background: color-mix(in srgb, var(--bm-warn) 22%, transparent);   color: color-mix(in srgb, var(--bm-warn) 82%, var(--bm-text) 18%); }
+#bm-root .bm-tag.danger { background: color-mix(in srgb, var(--bm-danger) 22%, transparent); color: color-mix(in srgb, var(--bm-danger) 82%, var(--bm-text) 18%); }
+#bm-root .bm-tag.info   { background: color-mix(in srgb, var(--bm-accent) 20%, transparent); color: color-mix(in srgb, var(--bm-accent) 82%, var(--bm-text) 18%); }
+#bm-root .bm-tag.experimental { background: color-mix(in srgb, #aa5ac8 28%, transparent); color: color-mix(in srgb, #aa5ac8 80%, var(--bm-text) 20%); }
+#bm-root .bm-tag.tbd    { background: color-mix(in srgb, var(--bm-muted) 20%, transparent);  color: var(--bm-muted); }
+
+/* ── Excluded notice ── */
+#bm-root .bm-excluded {
+    font-size: 0.74em;
+    color: var(--bm-muted);
+    margin: 0 0 12px;
+    padding: 6px 10px;
+    border-left: 2px solid var(--bm-border);
+    line-height: 1.5;
+}
+
+/* ── Actions ── */
+#bm-root .bm-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+/* ── Progress ── */
+#bm-progress {
+    margin-top: 12px;
+    display: none;
+}
+
+#bm-progress.active { display: block; }
+
+#bm-bar {
+    height: 7px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--bm-text) 12%, transparent);
+    overflow: hidden;
+}
+
+#bm-bar-fill {
+    height: 100%;
+    width: 0;
+    border-radius: 999px;
+    background: linear-gradient(90deg, var(--bm-accent), color-mix(in srgb, var(--bm-accent) 60%, var(--bm-ok) 40%));
+    transition: width 0.18s ease;
+}
+
+#bm-status {
+    display: block;
+    font-size: 0.8em;
+    color: var(--bm-muted);
+    margin-top: 6px;
+    word-break: break-word;
+}
+
+/* ── Responsive ── */
+@container bm-panel (max-width: 420px) {
+    #bm-root .bm-selbar .bm-btn { flex: 1 1 auto; justify-content: center; }
+    #bm-root .bm-actions .bm-btn { flex: 1 1 auto; justify-content: center; }
+}
+
+@media (max-width: 500px) {
+    #bm-root .bm-selbar .bm-btn { flex: 1 1 auto; justify-content: center; }
+    #bm-root .bm-actions .bm-btn { flex: 1 1 auto; justify-content: center; }
+}
