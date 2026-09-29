@@ -1,12 +1,17 @@
 {
     "display_name": "⊹ BACKUP MANAGER ⊹",
     "loading_order": 40,
-    "requires": [],
-    "optional": [],
     "js": "index.js",
     "css": "style.css",
     "author": "aceenvw",
-    "version": "1.0.1",
+    "version": "1.1.0",
+    "min_client_version": "1.19.0",
+    "hooks": {
+        "activate": "initialize",
+        "enable": "initialize",
+        "disable": "cleanup",
+        "clean": "cleanup"
+    },
     "homePage": "https://github.com/aceeenvw/backup-manager",
     "auto_update": false
 }

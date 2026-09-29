@@ -1,167 +1,140 @@
-# ⊹ BACKUP MANAGER ⊹
+<div align="center">
 
-A SillyTavern UI extension to selectively **export** your important user data into
-a single compressed ZIP. Built by `aceenvw`.
+# ⊹ ✦ BACKUP MANAGER ✦ ⊹
 
-**Export-only by design.** Restoring is a simple **manual** process (see
-[How to restore manually](#how-to-restore-manually)). This keeps the extension
-small, safe, and predictable — it never writes to or overwrites your data.
+### *Your SillyTavern data, packed into one selective backup.*
 
-It runs as a pure client-side extension and reuses SillyTavern's existing,
-CSRF-protected, per-user API endpoints. Backups are built locally with the
-bundled `/lib/jszip.min.js` (JSZip v3.10.1). No server plugin is required.
+[![Version](https://img.shields.io/badge/version-1.1.0-4a6a8a?style=flat-square)](manifest.json)
+[![License](https://img.shields.io/badge/license-MIT-2d5a3a?style=flat-square)](LICENSE)
+[![SillyTavern](https://img.shields.io/badge/SillyTavern-1.19.0+-3a7a4a?style=flat-square)](https://github.com/SillyTavern/SillyTavern)
 
----
+Choose categories → download a ZIP → review what was collected.
 
-## What it does
+</div>
 
-- Adds a **⊹ BACKUP MANAGER ⊹** panel under Extensions settings.
-- Pick categories → **Create backup ZIP** with a self-describing
-  `backup-manifest.json` → download.
-- **Verify backup**: re-check a ZIP's integrity (manifest + path safety + hashes).
-- Never imports, writes, overwrites, renames, or deletes anything.
+## ✦ Highlights
 
----
+| | |
+|---|---|
+| **Selective backups** | Cards, solo/group chats, lorebooks, images, themes, presets, and more. |
+| **Coverage report** | Collected, partial, failed, empty, and skipped categories in the panel and ZIP. |
+| **Integrity checks** | File presence, safe paths, sizes, and SHA-256 hashes. |
+| **Remembered choices** | Category selection, size limit, and last download start saved per account. |
+| **Mobile-friendly** | Wrapping labels, touch-sized controls, and adjustable backup limits. |
+| **English / Russian UI** | Follows SillyTavern's language; other languages use English. |
 
-## Supported export categories
+## ✦ Install
 
-| Category | ZIP path | Source endpoint(s) |
-|---|---|---|
-| Character cards | `characters/<name>.png` | `POST /api/characters/export` |
-| Chats (PRIVATE) | `chats/<char-id>/*.jsonl` | `POST /api/characters/chats` + `POST /api/chats/get` |
-| Lorebooks / World Info | `worlds/<name>.json` | `POST /api/worldinfo/get` |
-| Backgrounds | `backgrounds/<file>` | `POST /api/backgrounds/all` + `GET /backgrounds/<file>` |
-| CSS themes | `themes/<name>.json` | `POST /api/settings/get` (themes) |
-| Presets (OpenAI only) | `presets/openai/<name>.json` | PresetManager (`openai`) |
-| Personas metadata | `personas/personas.json` | `POST /api/settings/get` → `power_user.personas` |
-| Persona images | `persona-images/<file>` | `POST /api/avatars/get` + `GET /User Avatars/<file>` |
-| Regex scripts | `regexes/regexes.json` | `POST /api/settings/get` → `extension_settings.regex` |
-| User images / gallery | `user-images/<folder>/<file>` | `POST /api/images/folders` + `list` |
-| Extension list (names + repo links) | `extensions-links.json` | `GET /api/extensions/discover` + each `manifest.json` `homePage` |
+1. In SillyTavern **1.19.0 or newer**, open **Extensions → Install Extension**.
+2. Paste `https://github.com/aceeenvw/backup-manager` and install.
+3. Reload, then open **⊹ BACKUP MANAGER ⊹** in Extensions settings.
 
-Only **OpenAI / chat-completion** presets are exported. Other preset APIs (textgen,
-kobold, novel, context, instruct, sysprompt, reasoning) are not exported.
-**Chats**, **personas**, **regex**, **user-images**, and **extension-list** are
-**off by default** and must be ticked.
-
-> ⚠️ **Privacy:** a backup can contain private characters, chats, persona text,
-> and images. Persona metadata holds identity/profile/prompt info; regex can alter
-> chat behavior. Progress shows **counts only** — never names or contents.
+Reload after updating. No server plugin is needed.
 
 ---
 
-## Backup ZIP layout
+## ⊹ Create a backup
 
-```
-sillytavern-backup-YYYY-MM-DD-HH-mm.zip
-├── backup-manifest.json
-├── characters/<name>.png
-├── chats/<character-id>/<chat>.jsonl
-├── chats/<character-id>/_mapping.json
-├── worlds/<name>.json
-├── backgrounds/<file>
-├── themes/<name>.json
-├── presets/openai/<name>.json
-├── personas/personas.json
-├── persona-images/<file>
-├── regexes/regexes.json            (ST-native array; directly importable)
-├── regexes/regex-presets.json      (only if you have regex presets; reference)
-├── user-images/<folder>/<file>
-└── extensions-links.json          (only if extension-list selected; URLs sanitized)
-```
+1. Pick categories, or use **Recommended**. Chats and persona metadata are off by default.
+2. Optionally **Check counts**. Solo-chat counts total the chat files across all characters; gallery counts show folders.
+3. Click **Create backup ZIP**, then save the browser download.
+4. Open **Coverage report** and review warnings. A partial backup includes only the files successfully collected.
 
-All archive paths are **relative**. No absolute paths or local usernames are stored.
+The ZIP includes `backup-report.json` and `backup-manifest.json`, with original names
+and file mappings for restoration. **Last download started** records the browser
+handoff, not confirmation that you saved the file. Choices are stored in your
+SillyTavern account settings.
 
 ---
 
-## How to restore manually
+## ✦ Included categories
 
-This extension **only exports**. To restore, unzip the backup and put each
-category back using SillyTavern's own UI or data folders. For a full one-click
-restore of everything, prefer SillyTavern's native
-**User Settings → Account → Download Backup / restore** instead.
+| Category | ZIP location / scope |
+|---|---|
+| Character cards | `characters/` — PNG cards |
+| Solo character chats | `chats/` — raw JSONL and per-character mappings |
+| Groups and group chats | `groups/`, `group-chats/` — definitions, referenced chats, relationships |
+| Lorebooks / World Info | `worlds/` — JSON |
+| Backgrounds and themes | `backgrounds/`, `themes/` |
+| Chat Completion presets | `presets/openai/` — stored presets with known sensitive fields removed |
+| Persona metadata and images | `personas/personas.json`, `persona-images/` — separate selections |
+| Global regex scripts | `regexes/regexes.json`; regex presets saved separately for reference |
+| Gallery folder images | `user-images/` — images inside named folders |
+| Extension names and links | `extensions-links.json` — declared homepages, versions, enabled state |
+
+Excluded: secrets/config/session files, attachments, vectors, settings snapshots,
+extension code/settings, other preset types, orphaned group chats, custom group
+avatars, gallery root images/video/audio, and background folder organization.
+
+---
+
+## ⊹ Restore
+
+Extract the ZIP and use SillyTavern's imports or original account data folders.
+This extension does not restore archives automatically; its ZIP is not a drop-in
+copy of SillyTavern's native account backup. For filesystem restoration, stop
+SillyTavern and make a copy of the destination data first.
 
 | Category | How to restore |
 |---|---|
-| **Characters** (`characters/*.png`) | SillyTavern → Characters panel → **Import Character** → pick the `.png`. |
-| **Worlds / Lorebooks** (`worlds/*.json`) | World Info panel → **Import World Info** → pick the `.json`. |
-| **CSS themes** (`themes/*.json`) | User Settings → Themes → **Import theme**, or drop the file into your `<user>/themes/` folder and reload. |
-| **Presets (OpenAI)** (`presets/openai/*.json`) | Chat Completion settings → preset dropdown → **Import preset** → pick the `.json`. |
-| **Backgrounds** (`backgrounds/*`) | Backgrounds panel → **upload**, or drop files into `<user>/backgrounds/`. |
-| **Persona images** (`persona-images/*`) | Persona Management → **upload** each image (or drop into `<user>/User Avatars/`). |
-| **Personas metadata** (`personas/personas.json`) | Open the JSON; it maps avatar filename → display name plus descriptions. Re-create personas in Persona Management, or merge the entries into `power_user.personas` / `power_user.persona_descriptions` in your `settings.json` while SillyTavern is stopped. |
-| **Regex scripts** (`regexes/regexes.json`) | Regex extension → **Import** → pick `regexes.json`. It is a native ST array of scripts, so all are imported at once. (`regex-presets.json`, if present, is reference only — re-create presets in the Regex UI.) |
-| **Chats** (`chats/<char-id>/*.jsonl`) | Place each `.jsonl` into that character's chat folder (`<user>/chats/<character>/`). `_mapping.json` records the character id/name. |
-| **User images** (`user-images/<folder>/*`) | Drop into `<user>/user/images/<folder>/`. |
-| **Extension list** (`extensions-links.json`) | A reference list of installed extensions + repo links. Re-install manually via the listed URLs; nothing is auto-installed. |
+| **Cards / lorebooks / themes / presets** | Use **Import Character**, **Import World Info**, **Import theme**, or Chat Completion **Import preset**. Preset connections must be configured again. |
+| **Backgrounds** | Upload in the Backgrounds panel, or copy into the account's `backgrounds/` folder. |
+| **Personas** | Restore images into `User Avatars/` with their original filenames first, then use Persona Management's native **Restore** on `personas/personas.json`. Metadata restore merges and skips existing entries. |
+| **Solo chats** | Restore the character first. Use each `_mapping.json` to copy JSONL files into `chats/<avatar filename without extension>/` with their original names. If card import renamed the avatar, use its new filename's stem. |
+| **Groups** | Use `groups/_mapping.json`: copy definitions to `groups/<original group ID>.json` and chats to `group chats/<original chat ID>.jsonl`. Restore member cards with their original avatar filenames, or adjust the definition's member references. |
+| **Global regex** | Import `regexes/regexes.json` in the Regex extension. Native import changes script IDs; recreate regex presets in the UI. |
+| **Gallery images** | Copy into the account's `user/images/<original folder>/`. |
+| **Extension list** | Use the declared homepages as a reference for manual reinstallation. |
 
-> Tip: editing `settings.json` by hand should be done with SillyTavern **stopped**,
-> on a copy first. When in doubt, use the native Download Backup for a guaranteed
-> full restore.
+Archive filenames may be sanitized or numbered to prevent collisions. The
+manifest's file mappings preserve original names. When restoring linked data,
+use those original names rather than blindly copying the archive's folder layout.
 
 ---
 
-## Verify backup
+## ✦ Verify a backup
 
-**Verify backup** re-opens a ZIP you created and checks it is intact and
-restorable: the `backup-manifest.json` parses, every listed file is present, and
-each file's `sha256` still matches the manifest. It is **read-only** — it writes
-nothing. Use it to confirm a backup before relying on it.
+Click **Verify backup** and select a ZIP. It checks supported manifests, safe and
+unique paths, declared/actual sizes, missing/extra files, and available SHA-256
+hashes. Older schema-1 backups are supported when their paths and manifest are valid.
 
----
-
-## Privacy exclusions (never exported)
-
-The following are never collected by any export path — there is no collector that
-targets them, so they are never opened, parsed, hashed, or logged:
-
-- `secrets.json`, API keys, tokens, passwords, bearer tokens
-- `.env`, `config.yaml`
-- cookies / session / cache files
-- raw `.git/config` (extension repo URLs are sanitized of any credentials)
-- any filename containing `token`, `key`, `secret`, or `password`
-
-There is **no secrets category**. Backups still contain personal content
-(characters, chats, personas, images) — keep your ZIPs somewhere safe.
+**Integrity verified** means the files match the manifest; it does not prove
+authenticity, completeness, or successful restoration. Missing hashes are reported
+as **Unverified**. Use HTTPS or localhost to enable browser SHA-256 support.
 
 ---
 
-## Manifest fields (`backup-manifest.json`)
+## ⊹ Large backups / mobile
 
-| Field | Meaning |
-|---|---|
-| `schemaVersion` | Manifest schema version |
-| `extensionVersion` | Extension version that wrote the backup |
-| `stVersion` | SillyTavern version if available |
-| `registryVersion` | Category registry version |
-| `createdISO` | ISO timestamp |
-| `selectedCategories` | Categories chosen at export |
-| `counts` | Per-folder file counts |
-| `totalUncompressedSize` | Sum of file sizes (bytes) |
-| `perFile` | `[{ path, size, hash(sha256) }]` (relative paths) |
-| `warnings` | Export warnings |
-| `extensionLinksSanitized` | Extension names + credential-sanitized URLs |
-| `_meta.watermark` | Build/authorship marker (NOT a security signature) |
+The collection and verification limit defaults to **256 MiB**, adjustable from
+**32 to 2048 MiB**, with a **10,000-file ceiling** including reports. Already-compressed
+images are stored without recompression. ZIP creation still runs in memory and
+needs more RAM than the collected size; choose smaller category sets on mobile.
+Manifests and API metadata responses have a fixed **8 MiB** limit.
 
-No secret values, no absolute paths, and no usernames are ever written.
+Keep the page open while exporting. Cancel aborts requests and prevents download;
+compression already underway may finish before the operation unlocks. If a limit
+is reached, reduce the selection or raise it only when your device can handle it.
 
 ---
 
-## Provenance
+## ✦ Privacy
 
-Build/authorship marker (not a security feature). In DevTools:
+Backups are built in your browser using SillyTavern's bundled ZIP library and
+account-scoped APIs. They can contain private conversations, prompts, profiles,
+names, and images. Keep them private and inspect custom content before sharing.
 
-```js
-atob(document.querySelector('#bm-root')?.dataset.bmBuild || '')
-```
+Known sensitive fields are removed from preset copies; provider/model choices are
+retained. This is not a blanket filter for secrets someone put inside ordinary
+text or custom fields.
+Extension homepage credentials, query strings, and fragments are removed.
+Export does not save, restore, or delete source content; SillyTavern's read APIs
+may update metadata caches or create directories. Only this extension's preferences
+and download timestamp are saved to account settings.
 
 ---
 
-## License
+## ⊹ Credits / license
 
-Released under the **MIT License** — see [`LICENSE`](./LICENSE). Copyright © 2026
-`aceenvw`.
-
-You are free to use, modify, and redistribute it. If you fork or build on this
-project, please keep a visible credit to the original author `aceenvw` — this is
-a kind request, not a legal condition of the MIT license.
+By **aceenvw** · [SillyTavern](https://github.com/SillyTavern/SillyTavern) ·
+[JSZip](https://stuk.github.io/jszip/). Released under the [MIT License](LICENSE).

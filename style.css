@@ -1,8 +1,4 @@
-/* ⊹ BACKUP MANAGER ⊹ — aceenvw — export-only, theme-aware styling.
- * Signature: the panel chrome (card surface, border, accent rail) only renders
- * when [data-bm-build] is present (set in JS from the aceenvw build stamp).
- * Removing the stamp strips the styling — it is a build/authorship marker, NOT a
- * security feature. */
+/* ⊹ BACKUP MANAGER ⊹ — aceenvw */
 
 #bm-root {
     --bm-surface: color-mix(in srgb, var(--SmartThemeBlurTintColor, rgba(20, 20, 24, 0.96)) 86%, rgba(255, 255, 255, 0.04) 14%);
@@ -11,7 +7,7 @@
     --bm-accent: var(--SmartThemeQuoteColor, #6aa9ff);
     --bm-accent-soft: color-mix(in srgb, var(--SmartThemeQuoteColor, #6aa9ff) 16%, transparent);
     --bm-text: var(--SmartThemeBodyColor, #f2f0eb);
-    --bm-muted: color-mix(in srgb, var(--SmartThemeBodyColor, #f2f0eb) 62%, var(--SmartThemeEmColor, #9b9b9b) 38%);
+    --bm-muted: var(--SmartThemeBodyColor, #f2f0eb);
     --bm-ok: #4cb782;
     --bm-warn: #d8a93a;
     --bm-danger: #e0645f;
@@ -19,7 +15,6 @@
     color: var(--bm-text);
 }
 
-/* Panel chrome gated on the build stamp (signature). */
 #bm-root[data-bm-build] .bm-tab {
     border: 1px solid var(--bm-border);
     border-radius: 14px;
@@ -29,11 +24,13 @@
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
 }
 
-.bm-tab {
+#bm-root .bm-tab {
     padding: 12px;
     margin-top: 6px;
     container-type: inline-size;
     container-name: bm-panel;
+    min-inline-size: 0;
+    overflow-wrap: anywhere;
 }
 
 #bm-root .bm-intro {
@@ -51,13 +48,8 @@
     border-radius: var(--bm-radius);
     border: 1px solid color-mix(in srgb, var(--bm-warn) 40%, var(--bm-border) 60%);
     background: color-mix(in srgb, var(--bm-warn) 12%, var(--bm-surface-strong) 88%);
-    display: flex;
-    gap: 8px;
-    align-items: flex-start;
     line-height: 1.45;
 }
-
-#bm-root .bm-warning i { color: var(--bm-warn); margin-top: 1px; }
 
 /* ── Buttons ── */
 #bm-root .bm-btn {
@@ -65,6 +57,7 @@
     align-items: center;
     gap: 6px;
     padding: 6px 12px;
+    min-block-size: 44px;
     cursor: pointer;
     color: var(--bm-text);
     background: var(--bm-surface-strong);
@@ -81,18 +74,18 @@
 #bm-root .bm-btn:active { transform: scale(0.97); }
 
 #bm-root .bm-btn.primary {
-    background: var(--bm-accent);
+    background: var(--bm-surface-strong);
     border-color: var(--bm-accent);
-    color: #fff;
+    color: var(--bm-text);
     font-weight: 600;
 }
 
 #bm-root .bm-btn.primary:hover {
-    background: color-mix(in srgb, var(--bm-accent) 85%, #fff 15%);
+    background: var(--bm-surface);
 }
 
 #bm-root .bm-btn.danger {
-    color: var(--bm-danger);
+    color: var(--bm-text);
     border-color: color-mix(in srgb, var(--bm-danger) 50%, var(--bm-border) 50%);
 }
 
@@ -114,79 +107,77 @@
 #bm-root .bm-catlist {
     display: flex;
     flex-direction: column;
-    gap: 4px;
     margin: 0 0 10px;
+    border: 1px solid var(--bm-border);
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--bm-surface-strong);
     font-size: 0.88em;
 }
 
 #bm-root .bm-catrow {
-    display: flex;
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr) auto;
     align-items: center;
-    gap: 10px;
-    padding: 8px 10px;
-    border: 1px solid var(--bm-border);
-    border-radius: 10px;
-    background: var(--bm-surface-strong);
+    gap: 6px 16px;
+    padding: 6px 10px;
+    border: 0;
+    border-block-end: 1px solid var(--bm-border);
+    background: transparent;
     cursor: pointer;
-    transition: border-color 0.15s ease, background 0.15s ease;
+    transition: background 0.15s ease;
+    min-block-size: 44px;
 }
 
+#bm-root .bm-catrow:last-child { border-block-end: 0; }
+
 #bm-root .bm-catrow:hover {
-    border-color: color-mix(in srgb, var(--bm-accent) 40%, var(--bm-border) 60%);
+    background: color-mix(in srgb, var(--bm-accent) 6%, transparent);
 }
 
 /* Selected (checked) row gets an accent wash. */
 #bm-root .bm-catrow:has(input:checked) {
-    border-color: color-mix(in srgb, var(--bm-accent) 55%, var(--bm-border) 45%);
-    background: color-mix(in srgb, var(--bm-accent) 12%, var(--bm-surface-strong) 88%);
-}
-
-#bm-root .bm-catrow.bm-disabled {
-    opacity: 0.5;
-    cursor: default;
+    box-shadow: inset 2px 0 var(--bm-accent);
+    background: color-mix(in srgb, var(--bm-accent) 9%, transparent);
 }
 
 #bm-root .bm-catrow input[type="checkbox"] {
-    flex: 0 0 auto;
+    margin: 0;
     accent-color: var(--bm-accent);
-    width: 15px;
-    height: 15px;
+    width: 20px;
+    height: 20px;
 }
 
-#bm-root .bm-catname {
-    flex: 1 1 auto;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+#bm-root .bm-catlabel {
+    min-inline-size: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.4;
 }
 
 #bm-root .bm-count {
-    flex: 0 0 auto;
     color: var(--bm-muted);
     min-width: 2.2em;
     text-align: right;
     font-variant-numeric: tabular-nums;
-    font-size: 0.92em;
+    font-size: 0.84em;
+    max-inline-size: 7rem;
+    overflow-wrap: anywhere;
 }
 
 /* ── Status pills ── */
 #bm-root .bm-tag {
-    flex: 0 0 auto;
     font-size: 0.72em;
-    padding: 2px 9px;
+    padding: 1px 6px;
+    margin-inline-start: 6px;
     border-radius: 999px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
     border: 1px solid transparent;
     white-space: nowrap;
+    display: inline-block;
+    vertical-align: baseline;
 }
 
-#bm-root .bm-tag.safe   { background: color-mix(in srgb, var(--bm-ok) 22%, transparent);     color: color-mix(in srgb, var(--bm-ok) 80%, var(--bm-text) 20%); }
-#bm-root .bm-tag.warn   { background: color-mix(in srgb, var(--bm-warn) 22%, transparent);   color: color-mix(in srgb, var(--bm-warn) 82%, var(--bm-text) 18%); }
-#bm-root .bm-tag.danger { background: color-mix(in srgb, var(--bm-danger) 22%, transparent); color: color-mix(in srgb, var(--bm-danger) 82%, var(--bm-text) 18%); }
-#bm-root .bm-tag.info   { background: color-mix(in srgb, var(--bm-accent) 20%, transparent); color: color-mix(in srgb, var(--bm-accent) 82%, var(--bm-text) 18%); }
-#bm-root .bm-tag.experimental { background: color-mix(in srgb, #aa5ac8 28%, transparent); color: color-mix(in srgb, #aa5ac8 80%, var(--bm-text) 20%); }
-#bm-root .bm-tag.tbd    { background: color-mix(in srgb, var(--bm-muted) 20%, transparent);  color: var(--bm-muted); }
+#bm-root .bm-tag.danger { border-color: var(--bm-danger); color: var(--bm-text); }
 
 /* ── Excluded notice ── */
 #bm-root .bm-excluded {
@@ -237,13 +228,60 @@
     word-break: break-word;
 }
 
+#bm-root :is(button, input, summary):focus-visible {
+    outline: 2px solid var(--bm-text);
+    outline-offset: 3px;
+}
+
+#bm-root .bm-catrow:focus-within { background: color-mix(in srgb, var(--bm-accent) 12%, transparent); }
+
+#bm-root .bm-settings {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 6rem;
+    align-items: center;
+    gap: 8px;
+    margin-block: 12px;
+    font-size: 0.88em;
+}
+
+#bm-root .bm-settings input {
+    inline-size: 100%;
+    min-block-size: 44px;
+    min-inline-size: 0;
+    font-size: 16px;
+    color: var(--bm-text);
+    background: var(--bm-surface-strong);
+    border: 1px solid var(--bm-border);
+    border-radius: 8px;
+    padding-inline: 8px;
+}
+
+#bm-root .bm-settings small { grid-column: 1 / -1; line-height: 1.5; }
+#bm-root #bm-last-download { margin-block: 10px; }
+#bm-root #bm-report { margin-block-start: 12px; border-block-start: 1px solid var(--bm-border); }
+#bm-root [hidden] { display: none; }
+#bm-root summary { cursor: pointer; min-block-size: 44px; padding-block: 12px; font-size: 0.88em; }
+#bm-root .bm-report-list { display: grid; gap: 8px; }
+#bm-root .bm-report-row { display: grid; gap: 4px; padding: 10px; border: 1px solid var(--bm-border); border-radius: 8px; font-size: 0.84em; }
+#bm-root .bm-report-row small { line-height: 1.5; }
+#bm-root .bm-report-warnings ul { padding-inline-start: 20px; font-size: 0.8em; }
+
 /* ── Responsive ── */
 @container bm-panel (max-width: 420px) {
     #bm-root .bm-selbar .bm-btn { flex: 1 1 auto; justify-content: center; }
     #bm-root .bm-actions .bm-btn { flex: 1 1 auto; justify-content: center; }
+    #bm-root .bm-catrow { padding-inline: 8px; gap: 6px 14px; }
+    #bm-root .bm-count { max-inline-size: 5.5rem; }
 }
 
 @media (max-width: 500px) {
     #bm-root .bm-selbar .bm-btn { flex: 1 1 auto; justify-content: center; }
     #bm-root .bm-actions .bm-btn { flex: 1 1 auto; justify-content: center; }
+    #bm-root .bm-catrow { padding-inline: 8px; gap: 6px 14px; }
+    #bm-root .bm-count { max-inline-size: 5.5rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #bm-root *, #bm-root *::before, #bm-root *::after { transition: none; animation: none; }
+    #bm-root .bm-btn:active { transform: none; }
 }
