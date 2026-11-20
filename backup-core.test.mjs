@@ -15,17 +15,17 @@ const source = moduleSource.replace(/^import .*;\n/gm, '').replace(/^export /gm,
 
 function harness() {
     const context = { characters: [], powerUserSettings: {}, extensionSettings: {}, getRequestHeaders: () => ({}), saveSettingsDebounced() {} };
-    const notices = [], downloads = [], reports = [];
+    const notices = [], downloads = [];
     const $ = () => ({ val: () => 256, text() { return this; }, prop() { return this; }, attr() { return this; }, css() { return this; }, show() {}, hide() {}, addClass() {}, removeClass() {}, empty() { return this; }, append() { return this; }, find() { return this; } });
     class Zip {
         file() { return this; }
         async generateAsync(options, progress) { progress({ percent: 100 }); return new Blob(['zip']); }
     }
-    const ui = { locked: false, lock() { this.locked = true; }, unlock() { this.locked = false; }, status: value => notices.push(value), progress() {}, error: value => notices.push(value), warn: value => notices.push(value), success: value => notices.push(value), report: value => reports.push(value) };
+    const ui = { locked: false, lock() { this.locked = true; }, unlock() { this.locked = false; }, status: value => notices.push(value), progress() {}, error: value => notices.push(value), warn: value => notices.push(value), success: value => notices.push(value) };
     const sandbox = vm.createContext({ ...importedCore, translate, getCurrentLocale: () => 'en', SillyTavern: { getContext: () => context }, $, window: { JSZip: Zip }, JSZip: Zip, Blob, TextEncoder, TextDecoder, URL, AbortController, DOMException, crypto: globalThis.crypto, structuredClone, btoa, atob, setTimeout, clearTimeout, console: { warn() {} }, notices, downloads, ui, fetch: async () => new Response(JSON.stringify({ pkgVersion: '1.19.0' })), Response });
     vm.runInContext(source, sandbox);
     vm.runInContext('downloadBlob = (blob, name) => downloads.push(name); renderLastDownload = () => {};', sandbox);
-    return { sandbox, context, ui, downloads, notices, reports, run: code => vm.runInContext(code, sandbox) };
+    return { sandbox, context, ui, downloads, notices, run: code => vm.runInContext(code, sandbox) };
 }
 
 test('preset cleanup does not mutate source and strips native sensitive fields', () => {
@@ -47,44 +47,12 @@ test('path allocation distinguishes sanitized folders and preserves extensions',
     for (const path of ['../x', '/x', 'x/../y', 'x\\y', 'C:/x', 'x/con.png']) assert.equal(core.validPath(path), false);
 });
 
-test('manifest rejects empty, duplicated, malformed and oversized declarations; accepts legacy missing hashes as unverified', () => {
-    const manifest = { schemaVersion: 1, totalUncompressedSize: 3, perFile: [{ path: 'x.txt', size: 3, hash: null }] };
-    assert.equal(core.validateManifest(manifest, 100).size, 2);
-    for (const value of [{}, null, { ...manifest, schemaVersion: 999 }, { ...manifest, totalUncompressedSize: 4 }, { ...manifest, perFile: [...manifest.perFile, ...manifest.perFile] }, { ...manifest, perFile: [{ path: '../x', size: 3, hash: null }] }, { ...manifest, perFile: [{ path: 'x', size: 3, hash: 'bad' }] }]) assert.throws(() => core.validateManifest(value, 100));
-    assert.throws(() => core.validateManifest(manifest, 2));
-    assert.throws(() => core.validateManifest({ schemaVersion: 2, totalUncompressedSize: 2, perFile: [{ path: 'x', size: 1, hash: null }, { path: 'x/y', size: 1, hash: null }] }, 100), /conflicts/);
-});
 
-test('real bundled JSZip archives pass preflight; traversal and oversized entries fail', async () => {
-    const make = async (path, data) => {
-        const zip = new JSZip();
-        zip.file('backup-manifest.json', '{}');
-        zip.file(path, data, { createFolders: false });
-        return new Blob([await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' })]);
-    };
-    const entries = await core.inspectZip(await make('chats/x.jsonl', 'hello'), 10000);
-    assert.equal(entries.get('chats/x.jsonl'), 5);
-    await assert.rejects(core.inspectZip(await make('../escape', 'x'), 10000), /Unsafe/);
-    await assert.rejects(core.inspectZip(await make('large.txt', 'x'.repeat(20000)), 10000), /limit/);
-    const link = new JSZip();
-    link.file('backup-manifest.json', '{}');
-    link.file('link', 'target', { unixPermissions: 0xa1ff });
-    await assert.rejects(core.inspectZip(new Blob([await link.generateAsync({ type: 'uint8array', platform: 'UNIX' })]), 10000), /Unsupported/);
-});
 
-test('decompression reader enforces actual output size and cancellation', async () => {
-    const zip = new JSZip();
-    zip.file('x', 'a'.repeat(100000));
-    await assert.rejects(core.readZipEntry(zip.file('x'), 10), /limit/);
-    const controller = new AbortController();
-    controller.abort();
-    await assert.rejects(core.readZipEntry(zip.file('x'), 100000, controller.signal), { name: 'AbortError' });
-    assert.equal((await core.readZipEntry(zip.file('x'), 100000)).byteLength, 100000);
-});
 
-test('export cancellation during manifest hashing prevents download and unlocks UI', async () => {
+test('export cancellation during collection prevents download and unlocks UI', async () => {
     const app = harness();
-    app.run("REGISTRY.splice(0, REGISTRY.length, { id: 'test', exportFn: async () => ({ files: [{ path: 'test.txt', data: 'test' }], warnings: [] }) }); sha256 = async () => { operation.controller.abort(); return 'a'.repeat(64); };");
+    app.run("REGISTRY.splice(0, REGISTRY.length, { id: 'test', exportFn: async () => { operation.controller.abort(); return { files: [], warnings: [] }; } });");
     await app.run("runExport(['test'], ui)");
     assert.equal(app.downloads.length, 0);
     assert.equal(app.ui.locked, false);
@@ -132,6 +100,16 @@ test('solo chat counts total files, not characters, and do not read chat content
     assert.equal(app.run('scanned'), 1);
 });
 
+test('card and current-chat selections use independent avatar identities', async () => {
+    const app = harness();
+    app.context.characters = [{ name: 'Alex', avatar: 'one.png' }, { name: 'Alex', avatar: 'two.png' }];
+    app.context.extensionSettings.backup_manager = {cardAvatars:['one.png'], chatAvatars:['two.png'], singleChat:{avatar:'two.png', file:'selected.jsonl'}};
+    const calls = []; app.sandbox.calls = calls;
+    app.run(`postBlob = async (url, body) => {calls.push([url,body.avatar_url]); return new Blob(['card']);}; postJson = async (url, body) => {calls.push([url,body.avatar_url,body.file]); return {result:'chat'};};`);
+    await app.run('exportCharacters()'); await app.run('exportChats()');
+    assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['/api/characters/export','one.png'], ['/api/chats/export','two.png','selected.jsonl']]);
+});
+
 test('solo chat export retains raw JSONL and separates colliding avatar folders', async () => {
     const app = harness();
     app.context.characters.push({ avatar: 'foo%bar.png', name: 'One' }, { avatar: 'foo_bar.png', name: 'Two' });
@@ -172,40 +150,7 @@ test('English and Russian UI strings fall back to English for other languages', 
     assert.equal(translate('fr', 'export'), 'Create backup ZIP');
 });
 
-test('coverage distinguishes partial, empty, failed, skipped and unselected categories', async () => {
-    const app = harness();
-    const report = app.run("coverageReport(['characters', 'chats', 'worlds', 'themes', 'presets'], [{ id: 'characters', status: 'partial', files: 1, bytes: 8, warnings: ['card failed'] }, { id: 'chats', status: 'empty', files: 0, bytes: 0, warnings: [] }, { id: 'worlds', status: 'failed', files: 0, bytes: 0, warnings: ['request failed'] }], ['card failed', 'request failed'], true)");
-    assert.equal(report.files, 1);
-    assert.equal(report.bytes, 8);
-    assert.equal(report.categories.find(cat => cat.id === 'characters').status, 'partial');
-    assert.equal(report.categories.find(cat => cat.id === 'themes').status, 'skipped');
-    assert.equal(report.categories.find(cat => cat.id === 'backgrounds').status, 'notSelected');
-    assert.ok(report.categories.find(cat => cat.id === 'chats').limitations.en.includes('attachments'));
-});
 
-test('verification rejects empty manifests, mismatches and unexpected files; missing hashes remain unverified', async () => {
-    for (const variant of ['valid', 'validUnicode', 'empty', 'badHash', 'extra', 'missing', 'noHash', 'unicodeOverride']) {
-        const app = harness();
-        const zip = new JSZip();
-        const text = 'hello';
-        const path = variant === 'validUnicode' ? 'папка/пример.json' : 'x.txt';
-        const hash = Buffer.from(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))).toString('hex');
-        const manifest = variant === 'empty' ? {} : { schemaVersion: 1, totalUncompressedSize: 5, perFile: [{ path, size: 5, hash: variant === 'noHash' ? null : variant === 'badHash' ? 'a'.repeat(64) : hash }] };
-        zip.file('backup-manifest.json', JSON.stringify(manifest));
-        if (variant !== 'missing') zip.file(variant === 'unicodeOverride' ? '../é.txt' : path, text, { createFolders: variant === 'validUnicode' });
-        if (variant === 'extra') zip.file('extra.txt', 'extra');
-        const blob = new Blob([await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', ...(variant === 'unicodeOverride' ? { encodeFileName: name => new TextEncoder().encode(name === '../é.txt' ? 'x.txt' : name) } : {}) })]);
-        const input = { files: [blob], click() { this.promise = this.onchange(); } };
-        app.sandbox.document = { createElement: () => input };
-        app.sandbox.JSZip = app.sandbox.window.JSZip = { loadAsync: async file => JSZip.loadAsync(new Uint8Array(await file.arrayBuffer())) };
-        app.sandbox.ui = app.ui;
-        app.run('Object.assign(exportUi, ui); verifyBackup();');
-        await input.promise;
-        const final = app.notices.at(-1);
-        assert.ok(final.includes(variant.startsWith('valid') ? 'Integrity verified' : variant === 'noHash' ? 'Unverified' : variant === 'empty' ? 'Invalid or unsupported' : variant === 'unicodeOverride' ? 'ZIP path encoding mismatch' : 'Integrity problems'), `${variant}: ${final}`);
-        assert.equal(app.ui.locked, false);
-    }
-});
 
 test('groups preserve definitions, shared chat identities and failed references without filename collisions', async () => {
     const app = harness();
@@ -239,31 +184,46 @@ test('groups preserve definitions, shared chat identities and failed references 
     assert.equal(result.warnings.length, 1);
 });
 
-test('budget overflow stops export; completed handoff alone updates its timestamp and compression policy', async () => {
+test('plain export records download time and only packs selected files', async () => {
     const app = harness();
     const packed = [];
     app.sandbox.packed = packed;
-    app.run(`REGISTRY.splice(0, REGISTRY.length, { id: 'test', exportFn: async () => {
-        operation.maxBytes = 10;
-        const files = []; addFile(files, 'large.txt', 'x'.repeat(11)); return { files };
-    } });`);
-    await app.run("runExport(['test'], ui)");
-    assert.equal(app.downloads.length, 0);
-    assert.equal(app.ui.locked, false);
-    assert.equal(app.context.extensionSettings.backup_manager?.lastDownloadISO, undefined);
-    app.run(`REGISTRY[0].exportFn = async () => {
+    app.run(`REGISTRY.splice(0, REGISTRY.length, {id: 'test', exportFn: async () => {
         const files = []; addFile(files, 'card.png', 'image'); addFile(files, 'data.json', '{}');
         return { files, warnings: [] };
-    }; JSZip.prototype.file = (path, data, options) => { packed.push({ path, data, options }); };`);
+    }}); JSZip.prototype.file = (path, data, options) => { packed.push({ path, data, options }); };`);
     await app.run("runExport(['test'], ui)");
     assert.equal(app.downloads.length, 1);
     assert.ok(app.context.extensionSettings.backup_manager.lastDownloadISO);
     assert.equal(packed.find(file => file.path === 'card.png').options.compression, 'STORE');
     assert.equal(packed.find(file => file.path === 'data.json').options.compression, 'DEFLATE');
-    const manifest = JSON.parse(packed.find(file => file.path === 'backup-manifest.json').data);
-    assert.equal(manifest.stVersion, '1.19.0');
-    assert.ok(manifest.perFile.some(file => file.path === 'backup-report.json'));
-    assert.equal(manifest.totalUncompressedSize, packed.filter(file => file.path !== 'backup-manifest.json').reduce((size, file) => size + core.dataSize(file.data), 0));
+    assert.deepEqual(packed.map(file => file.path), ['card.png', 'data.json']);
+});
+
+test('touch-device ZIP stores text without recompressing it', async () => {
+    const app = harness();
+    app.sandbox.window.matchMedia = () => ({ matches: true });
+    app.sandbox.JSZip = app.sandbox.window.JSZip = JSZip;
+    app.run('downloadBlob = blob => downloads.push(blob);');
+    app.context.powerUserSettings = { personas: { 'a.png': 'A' } };
+    await app.run("runExport(['personas'], ui)");
+    const bytes = await app.downloads[0].arrayBuffer();
+    assert.equal(new DataView(bytes).getUint16(8, true), 0);
+    const zip = await JSZip.loadAsync(new Uint8Array(bytes));
+    assert.equal(JSON.parse(await zip.file('personas/personas.json').async('string')).personas['a.png'], 'A');
+});
+
+test('direct folder export writes the selected category path without packing a ZIP', async () => {
+    const app = harness(), written = new Map();
+    const dir = path => ({ getDirectoryHandle: async name => dir([...path, name]), getFileHandle: async name => ({ createWritable: async () => ({write: async data => written.set([...path,name].join('/'), data), close: async () => {}}) }) });
+    app.sandbox.destination = dir([]);
+    app.context.powerUserSettings = { personas: { 'a.png': 'A' } };
+    await app.run("runExport(['personas'], ui, destination)");
+    assert.equal(app.downloads.length, 0);
+    assert.equal(written.size, 1);
+    const [[path,data]] = written;
+    assert.match(path, /^sillytavern-backup-[^/]+\/personas\/personas\.json$/);
+    assert.equal(JSON.parse(data).personas['a.png'],'A');
 });
 
 test('cancellation while packing discards the ZIP and does not record a download', async () => {
@@ -287,17 +247,8 @@ test('requests cancel in-flight reads and bound declared metadata before parsing
     await assert.rejects(app.run("request('/api/test')"), /8 MiB limit/);
 });
 
-test('a stale file-picker callback cannot start verification after lifecycle cleanup', async () => {
-    const app = harness();
-    const input = { files: [new Blob(['not a zip'])], click() {} };
-    app.sandbox.document = { createElement: () => input };
-    app.run('verifyBackup(); lifecycle++;');
-    await input.onchange();
-    assert.equal(app.run('operation'), null);
-    assert.equal(app.notices.length, 0);
-});
 
-test('a native persona export packs and verifies end-to-end with bundled JSZip', async () => {
+test('a native persona export produces a readable ZIP with bundled JSZip', async () => {
     const app = harness();
     app.context.powerUserSettings = { personas: { 'я.png': 'Me' }, persona_descriptions: { 'я.png': { description: 'Описание' } }, default_persona: 'я.png' };
     app.sandbox.JSZip = app.sandbox.window.JSZip = JSZip;
@@ -305,16 +256,31 @@ test('a native persona export packs and verifies end-to-end with bundled JSZip',
     await app.run("runExport(['personas'], ui)");
     assert.equal(app.downloads.length, 1, app.notices.join('\n'));
     const file = app.downloads[0];
-    const entries = await core.inspectZip(file, 1000000);
-    assert.equal(entries.size, 3);
     const zip = await JSZip.loadAsync(new Uint8Array(await file.arrayBuffer()));
     const metadata = JSON.parse(await zip.file('personas/personas.json').async('string'));
     assert.equal(metadata.default_persona, 'я.png');
     assert.equal(metadata.persona_descriptions['я.png'].description, 'Описание');
-    const input = { files: [file], click() { this.promise = this.onchange(); } };
-    app.sandbox.document = { createElement: () => input };
-    app.sandbox.JSZip = { loadAsync: async blob => JSZip.loadAsync(new Uint8Array(await blob.arrayBuffer())) };
-    app.run('Object.assign(exportUi, ui); verifyBackup();');
-    await input.promise;
-    assert.ok(app.notices.at(-1).startsWith('Integrity verified: 2 files'), app.notices.at(-1));
+});
+
+
+test('folder selection only requests chosen folders, including an empty selection', async () => {
+    const app = harness(); app.sandbox.listed = [];
+    app.run(`postJson = async (url, body) => { if (url.endsWith('/folders')) return ['first', 'second']; listed.push(body.folder); return []; }`);
+    for (const folders of [[], ['second']]) {
+        app.context.extensionSettings.backup_manager = {galleryFolders: folders};
+        await app.run('exportUserImages()'); assert.deepEqual(app.sandbox.listed, folders);
+    }
+});
+
+test('MemoryBooks exports authored templates and set links without connection fields', async () => {
+    const app = harness();
+    app.context.extensionSettings.STMemoryBooks = { moduleSettings: {showMemoryPreviews: true, apiKey: 'private-value'}, profiles: [{token: 'private-value'}] };
+    const prompt = { key: 'scene', name: 'Scene', prompt: 'My scene\n{{place}}', enabled: true, responseFormat: 'Notes', triggers: {commands: ['scene']}, settings: {apiKey: 'private-value', suggestionsPrompt: 'Suggest a scene'} };
+    const set = {key: 'notes', name: 'Notes', items: [{id:'one', promptKey:'scene', label:'A', runtimeMacros:{'{{place}}':'Forest'}}]};
+    app.sandbox.fetch = async url => { assert.equal(url, '/user/files/stmb-side-prompts.json'); return Response.json({version:2,prompts:{scene:prompt},sets:{notes:set}}); };
+    const {files,warnings} = await app.run('exportMemoryBooks()'); assert.equal(warnings.length,0);
+    assert.ok(files.every(file => !file.data.includes('private-value')));
+    assert.deepEqual(JSON.parse(files[0].data), {showMemoryPreviews:true});
+    const doc = JSON.parse(files[1].data); assert.deepEqual(doc.sets.notes,set);
+    assert.deepEqual(doc.prompts.scene,{...prompt,settings:{suggestionsPrompt:'Suggest a scene'}});
 });

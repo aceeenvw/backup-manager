@@ -1,12 +1,10 @@
 // ⊹ BACKUP MANAGER ⊹ — aceenvw
-import { safeName, pathKey, validPath, allocatePath, cleanPreset, dataSize, validateManifest, inspectZip, readZipEntry, MAX_FILES, MAX_METADATA } from './backup-core.mjs';
+import { safeName, pathKey, allocatePath, cleanPreset, dataSize, MAX_METADATA } from './backup-core.mjs';
 import { getCurrentLocale } from '../../../i18n.js';
 import { translate } from './locales.mjs';
 
 const MODULE_NAME = 'backup_manager';
 const MODULE_VERSION = '1.1.0';
-const SCHEMA_VERSION = 2;
-const REGISTRY_VERSION = 4;
 
 // Only OpenAI / chat-completion presets are exported. Other preset APIs
 // (textgen, kobold, novel, context, instruct, etc.) are intentionally skipped.
@@ -16,7 +14,6 @@ let ctx = SillyTavern.getContext();
 let operation = null;
 let enabled = false;
 let readySource = null;
-let lifecycle = 0;
 const downloadUrls = new Set();
 const downloadTimers = new Set();
 const tr = (key, ...values) => translate(getCurrentLocale(), key, ...values);
@@ -33,25 +30,16 @@ function savePreferences(patch) {
     ctx.saveSettingsDebounced();
 }
 
-function byteLimit() {
-    const value = Number($('#bm-size-limit').val() ?? preferences().maxMiB ?? 256);
-    return Math.min(2048, Math.max(32, Number.isFinite(value) ? value : 256)) * 1048576;
-}
 
 function checkCancelled() {
     if (operation?.controller.signal.aborted) throw new DOMException('Cancelled', 'AbortError');
-    if (operation?.limitError) throw operation.limitError;
 }
 
 function addFile(files, path, data, source = null) {
     checkCancelled();
     const size = dataSize(data);
-    if (operation && (operation.bytes + size > operation.maxBytes || operation.files >= MAX_FILES - (operation.category ? 2 : 1))) {
-        operation.limitError = new Error(tr('limitReached'));
-        throw operation.limitError;
-    }
     const allocated = allocatePath(path, operation?.paths ?? new Set(files.map(file => pathKey(file.path))));
-    files.push({ path: allocated, data, size, source, category: operation?.category ?? null });
+    files.push({ path: allocated, data, size, source });
     if (operation) { operation.bytes += size; operation.files++; }
     return allocated;
 }
@@ -70,8 +58,9 @@ async function request(url, options = {}, mode = 'json') {
     try {
         const response = await fetch(url, { ...options, headers: headers(), signal: controller.signal });
         if (!response.ok) throw new Error(`${url} → HTTP ${response.status}`);
-        const max = Math.min(operation?.maxBytes ?? byteLimit(), mode === 'json' && url !== '/api/chats/export' ? MAX_METADATA : Infinity);
-        const limitMessage = () => tr(mode === 'json' && url !== '/api/chats/export' ? 'metadataLimit' : 'limitReached');
+        if (mode === 'blob') return await response.blob();
+        const max = mode === 'json' && url !== '/api/chats/export' ? MAX_METADATA : Infinity;
+        const limitMessage = () => tr("metadataLimit");
         const declared = Number(response.headers.get('content-length'));
         if (declared > max) throw new Error(limitMessage());
         const chunks = [];
@@ -94,7 +83,7 @@ async function request(url, options = {}, mode = 'json') {
         }
         checkCancelled();
         const blob = new Blob(chunks, { type: response.headers.get('content-type') || '' });
-        return mode === 'blob' ? blob : JSON.parse(await blob.text());
+        return JSON.parse(await blob.text());
     } finally { clearTimeout(timer); parent?.removeEventListener('abort', abort); }
 }
 
@@ -177,27 +166,19 @@ function stamp() {
 // traversal, escape Windows reserved names, cap length. Preserves Unicode.
 const sanitize = safeName;
 
-// SHA-256 hex digest of a Blob/ArrayBuffer/string (used for integrity only).
-async function sha256(data) {
-    let buf;
-    if (data instanceof Blob) buf = await data.arrayBuffer();
-    else if (typeof data === 'string') buf = new TextEncoder().encode(data);
-    else buf = data;
-    const digest = await crypto.subtle.digest('SHA-256', buf);
-    return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
-}
 
 const REGISTRY = [
-    { id: 'characters', defaultEnabled: true, list: listCharacters, exportFn: exportCharacters },
-    { id: 'chats', private: true, unit: 'chatsUnit', list: listChats, exportFn: exportChats },
-    { id: 'groups', private: true, list: listGroups, exportFn: exportGroups },
-    { id: 'worlds', defaultEnabled: true, list: listWorlds, exportFn: exportWorlds },
-    { id: 'backgrounds', defaultEnabled: true, list: listBackgrounds, exportFn: exportBackgrounds },
-    { id: 'themes', defaultEnabled: true, list: listThemes, exportFn: exportThemes },
-    { id: 'presets', defaultEnabled: true, list: listPresets, exportFn: exportPresets },
-    { id: 'personas', private: true, list: listPersonas, exportFn: exportPersonas },
-    { id: 'persona-images', defaultEnabled: true, list: listPersonaImages, exportFn: exportPersonaImages },
+    { id: 'characters', list: listCharacters, exportFn: exportCharacters },
+    { id: 'chats', unit: 'chatsUnit', list: listChats, exportFn: exportChats },
+    { id: 'groups', list: listGroups, exportFn: exportGroups },
+    { id: 'worlds', list: listWorlds, exportFn: exportWorlds },
+    { id: 'backgrounds', list: listBackgrounds, exportFn: exportBackgrounds },
+    { id: 'themes', list: listThemes, exportFn: exportThemes },
+    { id: 'presets', list: listPresets, exportFn: exportPresets },
+    { id: 'personas', list: listPersonas, exportFn: exportPersonas },
+    { id: 'persona-images', list: listPersonaImages, exportFn: exportPersonaImages },
     { id: 'user-images', unit: 'foldersUnit', list: listUserImages, exportFn: exportUserImages },
+    { id: 'memorybooks', list: async () => ({ count: ctx.extensionSettings?.STMemoryBooks ? 1 : null }), exportFn: exportMemoryBooks },
     { id: 'regex', list: listRegex, exportFn: exportRegex },
     { id: 'extension-list', list: listExtensions, exportFn: exportExtensionList },
 ];
@@ -223,16 +204,22 @@ async function fetchExtensionSettings() {
 }
 
 
+function scopedCards(key) {
+    const ids = preferences()[key];
+    const selected = Array.isArray(ids) ? new Set(ids) : null;
+    return (ctx.characters ?? []).filter(c => c?.avatar && (!selected || selected.has(c.avatar)));
+}
+
 async function listCharacters() {
-    return { count: (ctx.characters ?? []).filter(character => character.avatar).length };
+    return { count: scopedCards('cardAvatars').length };
 }
 
 async function listChats() {
     let count = 0;
-    for (const character of ctx.characters ?? []) {
+    for (const character of scopedCards('chatAvatars')) {
         checkCancelled();
         if (!character.avatar) continue;
-        count += (await characterChats(character.avatar)).length;
+        count += (await scopedChats(character.avatar)).length;
     }
     checkCancelled();
     return { count };
@@ -243,6 +230,11 @@ async function characterChats(avatar) {
     if (data?.error === true) return [];
     if (!Array.isArray(data) || data.some(entry => typeof entry?.file_name !== 'string' || !entry.file_name.endsWith('.jsonl'))) throw new Error('Invalid character chat listing');
     return data;
+}
+
+async function scopedChats(avatar) {
+    const chat = preferences().singleChat;
+    return chat ? (chat.avatar === avatar ? [{file_name: chat.file}] : []) : characterChats(avatar);
 }
 
 async function listGroups() {
@@ -287,7 +279,51 @@ async function listPersonaImages() {
 }
 
 async function listUserImages() {
-    return { count: (await postJson('/api/images/folders', {})).length };
+    return { count: (await galleryFolders(true)).length };
+}
+
+async function galleryFolders(selectedOnly) {
+    const folders = await postJson('/api/images/folders', {});
+    if (!Array.isArray(folders) || !folders.every(name => typeof name === 'string' && name && !/[\\/]/.test(name) && name !== '.' && name !== '..')) throw new Error('Invalid gallery folder listing');
+    const selected = preferences().galleryFolders;
+    if (!selectedOnly || !Array.isArray(selected)) return folders;
+    const allowed = new Set(selected);
+    return folders.filter(name => allowed.has(name));
+}
+
+function scalarFields(value, keys) {
+    return Object.fromEntries(keys.split(' ').filter(key => ['boolean', 'string', 'number'].includes(typeof value?.[key])).map(key => [key, value[key]]));
+}
+
+function sidePromptBackup(doc) {
+    if (doc?.version !== 2 || !doc.prompts || typeof doc.prompts !== 'object' || Array.isArray(doc.prompts)) throw new Error('Unsupported MemoryBooks side-prompt format');
+    const prompts = Object.create(null), sets = Object.create(null);
+    for (const [key, p] of Object.entries(doc.prompts)) {
+        if (p?.key !== key || typeof p.prompt !== 'string' || typeof p.enabled !== 'boolean' || !p.name) throw new Error('Invalid MemoryBooks prompt');
+        const settings = scalarFields(p.settings, 'suggestionsPrompt saveAllVersions');
+        if (p.settings?.lorebook) settings.lorebook = scalarFields(p.settings.lorebook, 'constVectMode position orderMode orderValue preventRecursion delayUntilRecursion ignoreBudget');
+        const triggers = {};
+        if (Array.isArray(p.triggers?.commands)) triggers.commands = p.triggers.commands.filter(x => typeof x === 'string');
+        if (p.triggers?.onInterval) triggers.onInterval = scalarFields(p.triggers.onInterval, 'visibleMessages');
+        if (p.triggers?.onAfterMemory) triggers.onAfterMemory = scalarFields(p.triggers.onAfterMemory, 'enabled');
+        prompts[key] = { ...scalarFields(p, 'key name prompt enabled responseFormat specialKind createdAt updatedAt'), settings, triggers };
+    }
+    for (const [key, set] of Object.entries(doc.sets ?? {})) {
+        if (set?.key !== key || !set.name || !Array.isArray(set.items)) throw new Error('Invalid MemoryBooks set');
+        sets[key] = { ...scalarFields(set, 'key name createdAt updatedAt'), items: set.items.map(item => ({ ...scalarFields(item, 'id promptKey label'), runtimeMacros: Object.fromEntries(Object.entries(item.runtimeMacros ?? {}).filter(([token, value]) => /^\{\{.+\}\}$/.test(token) && typeof value === 'string' && !/key|secret|token|password|auth/i.test(token))) })) };
+    }
+    return { version: 2, prompts, sets };
+}
+
+async function exportMemoryBooks() {
+    const files = [], warnings = [];
+    const prefs = scalarFields(ctx.extensionSettings?.STMemoryBooks?.moduleSettings, 'alwaysUseDefault showMemoryPreviews showConsolidationPreviews showNotifications showFloatingClipButton maxTokens tokenWarningThreshold manualModeEnabled autoSummaryEnabled autoSummaryInterval autoSummaryTriggerMode autoSummaryTokenThreshold autoSummaryBuffer autoCreateLorebook characterAwareMemories useSeparateGroupSidePrompts');
+    if (Object.keys(prefs).length) addFile(files, 'memorybooks/preferences.json', JSON.stringify(prefs, null, 2));
+    try {
+        const doc = await request('/user/files/stmb-side-prompts.json');
+        addFile(files, 'memorybooks/stmb-side-prompts.json', JSON.stringify(sidePromptBackup(doc), null, 2));
+    } catch (error) { checkCancelled(); warnings.push(redact(error.message)); }
+    return { files, warnings };
 }
 
 async function listRegex() {
@@ -306,7 +342,7 @@ async function postBlob(url, body) {
 }
 
 async function exportCharacters(onItem) {
-    const chars = (ctx.characters || []).filter(c => c.avatar);
+    const chars = scopedCards('cardAvatars');
     const files = [], warnings = [];
     for (let i = 0; i < chars.length; i++) {
         checkCancelled();
@@ -463,9 +499,7 @@ async function exportUserImages(onItem) {
     const files = [], warnings = [];
     let folders = [];
     try {
-        const d = await postJson('/api/images/folders', {});
-        if (!Array.isArray(d)) throw new Error('Invalid gallery folder listing');
-        folders = d;
+        folders = await galleryFolders(true);
     } catch (e) { return { files, warnings: [`user-images folders: ${redact(e.message)}`] }; }
     for (const folder of folders) {
         checkCancelled();
@@ -530,7 +564,6 @@ async function exportExtensionList(onItem) {
     return {
         files,
         warnings,
-        links: list,
     };
 }
 
@@ -538,7 +571,7 @@ async function exportExtensionList(onItem) {
 // Progress reports counts only — never chat names or content. A per-character
 // _mapping.json records the character id/name for a manual restore.
 async function exportChats(onItem) {
-    const chars = (ctx.characters || []).filter(c => c.avatar);
+    const chars = scopedCards('chatAvatars');
     const files = [], warnings = [];
 
     for (let i = 0; i < chars.length; i++) {
@@ -548,7 +581,7 @@ async function exportChats(onItem) {
 
         let list = null;
         try {
-            list = await characterChats(c.avatar);
+            list = await scopedChats(c.avatar);
         } catch (e) { warnings.push(`chats(list): ${redact(e.message)}`); continue; }
         if (!list || !list.length) continue;
 
@@ -627,123 +660,81 @@ async function exportGroups(onItem) {
     if (mappings.length) addFile(files, 'groups/_mapping.json', JSON.stringify({ groups: mappings }, null, 2));
     return { files, warnings };
 }
-// ─── Manifest builder ───
-// Builds backup-manifest.json: per-file path/size/sha256, counts, and metadata.
-// Paths are relative; source metadata preserves original restore identities.
-async function buildManifest(selectedIds, fileEntries, allWarnings, links) {
-    const counts = {};
-    const perFile = [];
-    let totalUncompressedSize = 0;
-    for (const f of fileEntries) {
-        checkCancelled();
-        const folder = f.path.split('/')[0];
-        counts[folder] = (counts[folder] || 0) + 1;
-        const size = f.size ?? dataSize(f.data);
-        totalUncompressedSize += size;
-        const hash = globalThis.crypto?.subtle ? await sha256(f.data) : null;
-        checkCancelled();
-        perFile.push({ path: f.path, size, hash, category: f.category, source: f.source });
-    }
-    return {
-        schemaVersion: SCHEMA_VERSION,
-        extensionVersion: MODULE_VERSION,
-        stVersion: operation?.stVersion ?? null,
-        registryVersion: REGISTRY_VERSION,
-        createdISO: new Date().toISOString(),
-        selectedCategories: selectedIds,
-        counts,
-        totalUncompressedSize,
-        perFile,
-        warnings: allWarnings,
-        integrity: globalThis.crypto?.subtle ? 'sha256' : 'unavailable',
-        extensionLinksSanitized: links || [],
-        _meta: { build: buildMarker() },
-    };
-}
-
-// ─── Export engine ───
-// Runs the selected collectors, builds the manifest, packs the ZIP, downloads it,
-// and reports progress/results through the ui controller.
-async function runExport(selectedIds, ui) {
+async function runExport(selectedIds, ui, destination = null) {
     if (!beginOperation(ui)) return;
     const job = operation;
-    const allFiles = [], allWarnings = [], results = [];
-    let links = [];
+    const allFiles = [];
+    let partial = false;
     try {
-        if (selectedIds.includes('chats') || selectedIds.includes('groups')) {
-            const confirmed = ctx.Popup?.show?.confirm ? await ctx.Popup.show.confirm(tr('chatConfirmTitle'), tr('chatConfirm')) : window.confirm(tr('chatConfirm'));
-            if (!confirmed) { ui.status(tr('cancelled')); return; }
-            checkCancelled();
-        }
         ui.status(tr('loading'));
-        if (!(await ensureZip())) throw new Error(tr('zipMissing'));
+        if (!destination && !(await ensureZip())) throw new Error(tr('zipMissing'));
         checkCancelled();
         const cats = REGISTRY.filter(cat => selectedIds.includes(cat.id));
         if (!cats.length) throw new Error(tr('select'));
         if (selectedIds.includes('characters') || selectedIds.includes('chats')) ctx = { ...ctx, characters: (ctx.characters ?? []).map(character => ({ avatar: character.avatar, name: character.name })) };
         const pu = ctx.powerUserSettings ?? {}, es = ctx.extensionSettings ?? {};
         job.snapshot = structuredClone({ power_user: selectedIds.includes('personas') ? { personas: pu.personas, persona_descriptions: pu.persona_descriptions, default_persona: pu.default_persona } : {}, extension_settings: selectedIds.includes('regex') ? { regex: es.regex, regex_presets: es.regex_presets } : {} });
-        try { job.stVersion = (await request('/version')).pkgVersion ?? null; }
-        catch { checkCancelled(); allWarnings.push('SillyTavern version unavailable'); }
         for (let i = 0; i < cats.length; i++) {
             checkCancelled();
             const cat = cats[i];
-            job.category = cat.id;
-            const result = { id: cat.id, status: 'empty', files: 0, bytes: 0, warnings: [] };
-            results.push(result);
             const update = () => ui.status(tr('collecting', tr(cat.id), job.files, formatSize(job.bytes)));
             update();
             ui.progress(Math.round(i / cats.length * 60));
             try {
                 const collected = await cat.exportFn(update);
                 checkCancelled();
-                allFiles.push(...collected.files);
-                result.files = collected.files.length;
-                result.bytes = collected.files.reduce((sum, file) => sum + (file.size ?? dataSize(file.data)), 0);
-                result.warnings = collected.warnings ?? [];
-                result.status = result.warnings.length ? (result.files ? 'partial' : 'failed') : (result.files ? 'complete' : 'empty');
-                allWarnings.push(...result.warnings);
-                if (collected.links) links = collected.links;
+                for (const file of collected.files) allFiles.push(file);
+                if (collected.warnings?.length) partial = true;
             } catch (error) {
                 checkCancelled();
-                result.status = 'failed';
-                result.warnings.push(redact(error.message));
-                allWarnings.push(`${cat.id}: ${redact(error.message)}`);
+                partial = true;
+                warn(cat.id, error);
             }
         }
-        if (allFiles.length && !globalThis.crypto?.subtle) allWarnings.push(tr('noHashes'));
-        const report = coverageReport(selectedIds, results, allWarnings);
-        ui.report?.(report);
         if (!allFiles.length) throw new Error(tr('empty'));
-        job.category = null;
-        addFile(allFiles, 'backup-report.json', JSON.stringify(report, null, 2));
-        ui.status(tr('manifest'));
-        ui.progress(65);
-        const manifest = await buildManifest(selectedIds, allFiles, allWarnings, links);
-        const manifestText = JSON.stringify(manifest, null, 2);
-        if (dataSize(manifestText) > MAX_METADATA || manifest.totalUncompressedSize + dataSize(manifestText) > job.maxBytes) throw new Error(tr('limitReached'));
-        validateManifest(manifest, job.maxBytes);
         checkCancelled();
+        if (destination) {
+            const root = await destination.getDirectoryHandle(`sillytavern-backup-${stamp()}-${crypto.randomUUID()}`, {create: true});
+            for (const [index, file] of allFiles.entries()) {
+                checkCancelled();
+                const parts = file.path.split('/');
+                const name = parts.pop();
+                let dir = root;
+                for (const part of parts) dir = await dir.getDirectoryHandle(part, {create: true});
+                const handle = await dir.getFileHandle(name, {create: true});
+                const writer = await handle.createWritable();
+                try { checkCancelled(); await writer.write(file.data); await writer.close(); }
+                catch (error) { await writer.abort().catch(() => {}); throw error; }
+                ui.progress(60 + Math.round(40 * (index + 1) / allFiles.length));
+            }
+            savePreferences({lastDownloadISO: new Date().toISOString()}); renderLastDownload();
+            ui[partial ? 'warn' : 'success'](tr(partial ? 'folderPartial' : 'folderDone', allFiles.length));
+            return;
+        }
         const zip = new JSZip();
-        zip.file('backup-manifest.json', manifestText, { createFolders: false });
-        const paths = new Set(['backup-manifest.json']);
+        const lowPower = window.matchMedia?.('(pointer: coarse)').matches;
+        const paths = new Set();
         for (const file of allFiles) {
             if (paths.has(pathKey(file.path))) throw new Error('Duplicate archive path');
             paths.add(pathKey(file.path));
-            zip.file(file.path, file.data, { createFolders: false, compression: /\.(png|jpe?g|webp|gif|avif|mp4|webm|zip)$/i.test(file.path) ? 'STORE' : 'DEFLATE' });
+            zip.file(file.path, file.data, { createFolders: false, compression: lowPower || /\.(png|jpe?g|webp|gif|avif|mp4|webm|zip)$/i.test(file.path) ? 'STORE' : 'DEFLATE' });
         }
+        const count = allFiles.length;
         allFiles.length = 0;
-        const blob = await zip.generateAsync({ type: 'blob', streamFiles: true, compression: 'DEFLATE', compressionOptions: { level: 3 } }, metadata => {
+        let lastPercent = -1;
+        const blob = await zip.generateAsync({ type: 'blob', streamFiles: true, compressionOptions: { level: 1 } }, metadata => {
+            const percent = Math.round(metadata.percent);
+            if (percent === lastPercent || job.controller.signal.aborted) return;
+            lastPercent = percent;
             ui.progress(65 + Math.round(metadata.percent * 0.35));
-            if (!job.controller.signal.aborted) ui.status(tr('packing', Math.round(metadata.percent)));
+            ui.status(tr('packing', percent));
         });
         checkCancelled();
         downloadBlob(blob, `sillytavern-backup-${stamp()}.zip`);
         try { savePreferences({ lastDownloadISO: new Date().toISOString() }); renderLastDownload(); }
         catch (error) { warn('preferences', error); }
-        ui[allWarnings.length ? 'warn' : 'success'](tr(allWarnings.length ? 'partial' : 'finished', manifest.perFile.length, formatSize(blob.size)));
+        ui[partial ? 'warn' : 'success'](tr(partial ? 'partial' : 'finished', count, formatSize(blob.size)));
     } catch (error) {
-        if (results.length) ui.report?.(coverageReport(selectedIds, results, allWarnings, true));
         if (job.controller.signal.aborted) ui.status(tr('cancelled'));
         else { ui.error(tr('failed', redact(error.message))); warn('export', error); }
     } finally { endOperation(job, ui); }
@@ -752,7 +743,7 @@ async function runExport(selectedIds, ui) {
 function beginOperation(ui) {
     if (operation) { ui.status(tr('busy')); return false; }
     ctx = SillyTavern.getContext();
-    operation = { controller: new AbortController(), paths: new Set(['backup-manifest.json']), folders: new Set(), bytes: 0, files: 0, maxBytes: byteLimit() };
+    operation = { controller: new AbortController(), paths: new Set(), folders: new Set(), bytes: 0, files: 0 };
     ui.lock();
     return true;
 }
@@ -763,16 +754,6 @@ function endOperation(job, ui) {
     ui.unlock();
 }
 
-const COVERAGE_NOTES = { chats: 'chatsScope', groups: 'groupScope', presets: 'presetScope', personas: 'personaScope', 'persona-images': 'personaScope', 'user-images': 'galleryScope', regex: 'regexScope', 'extension-list': 'extensionScope' };
-
-function coverageReport(selectedIds, results, warnings, interrupted = false) {
-    return {
-        createdISO: new Date().toISOString(), selectedCategories: selectedIds, interrupted,
-        files: results.reduce((sum, result) => sum + result.files, 0),
-        bytes: results.reduce((sum, result) => sum + result.bytes, 0), warnings: [...warnings],
-        categories: REGISTRY.map(cat => ({ ...(results.find(result => result.id === cat.id) ?? { id: cat.id, status: selectedIds.includes(cat.id) ? 'skipped' : 'notSelected', files: 0, bytes: 0, warnings: [] }), limitations: COVERAGE_NOTES[cat.id] ? { en: translate('en', COVERAGE_NOTES[cat.id]), ru: translate('ru', COVERAGE_NOTES[cat.id]) } : null })),
-    };
-}
 
 // ─── UI controller ───
 // Bridges the export engine to the DOM (buttons, status line, progress bar). All
@@ -785,7 +766,6 @@ const exportUi = {
     success(m) { window.toastr?.success(redact(m)); this.status(m); },
     warn(m) { window.toastr?.warning(redact(m)); this.status(m); },
     error(m) { window.toastr?.error(redact(m)); this.status(m); },
-    report: renderReport,
 };
 
 function getSelectedExportIds() {
@@ -794,30 +774,12 @@ function getSelectedExportIds() {
 
 function renderLastDownload() {
     const date = new Date(preferences().lastDownloadISO);
-    $('#bm-last-download').text(Number.isFinite(date.getTime()) ? tr('last', date.toLocaleString(getCurrentLocale() || 'en')) : tr('never'));
+    const locale = getCurrentLocale() || 'en';
+    const valid = Number.isFinite(date.getTime());
+    const full = valid ? tr('last', date.toLocaleString(locale)) : tr('never');
+    $('#bm-last-download').attr({ title: full, 'aria-label': full }).text(valid ? date.toLocaleString(locale, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : tr('never'));
 }
 
-function renderReport(report) {
-    const $report = $('#bm-report').empty().prop('hidden', false);
-    $report.append($('<summary>').text(tr('report')));
-    $report.append($('<p>').text(tr('reportSummary', report.files, formatSize(report.bytes), report.warnings.length)));
-    const $list = $('<div class="bm-report-list">');
-    for (const category of report.categories.filter(cat => cat.status !== 'notSelected')) {
-        const $row = $('<div class="bm-report-row">');
-        $row.append($('<strong>').text(tr(category.id)));
-        $row.append($('<span>').text(`${tr(category.status === 'failed' ? 'failedState' : category.status === 'partial' ? 'partialState' : category.status === 'empty' ? 'emptyState' : category.status)} · ${category.files} · ${formatSize(category.bytes)}`));
-        if (category.limitations) $row.append($('<small>').text(category.limitations[String(getCurrentLocale()).startsWith('ru') ? 'ru' : 'en']));
-        $list.append($row);
-    }
-    $report.append($list);
-    if (report.warnings.length) {
-        const $warnings = $('<details class="bm-report-warnings">').append($('<summary>').text(tr('warningCount', report.warnings.length)));
-        const $items = $('<ul>');
-        for (const warning of report.warnings.slice(0, 100)) $items.append($('<li>').text(redact(warning)));
-        $warnings.append($items);
-        $report.append($warnings);
-    }
-}
 
 // ─── UI build ───
 
@@ -845,42 +807,37 @@ async function refreshCounts() {
 
 function buildExportTab() {
     const $tab = $('<div id="bm-tab-export" class="bm-tab">');
-    $tab.append($('<p class="bm-intro">').text(tr('intro')));
-    $tab.append($('<div class="bm-warning">').text(tr('privacy')));
 
     const $bar = $('<div class="bm-selbar">');
-    $bar.append(button('bm-sel-all', 'all'), button('bm-sel-none', 'none'), button('bm-sel-rec', 'recommended'), button('bm-refresh-counts', 'counts').addClass('primary'));
+    $bar.append(button('bm-sel-toggle', 'all'), $('<span class="bm-last-badge">').append('<i class="fa-regular fa-clock" aria-hidden="true"></i><span id="bm-last-download"></span>'), button('bm-refresh-counts', 'counts').attr({title: tr('counts'), 'aria-label': tr('counts')}).empty().append('<i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>'));
     $tab.append($bar);
 
     const $list = $('<div class="bm-catlist">');
     for (const cat of REGISTRY) {
         const saved = preferences().selectedCategories;
-        const checkedDefault = Array.isArray(saved) ? saved.includes(cat.id) : Boolean(cat.defaultEnabled);
+        const checkedDefault = Array.isArray(saved) && saved.includes(cat.id);
         const $row = $('<label class="bm-catrow">');
         const $cb = $('<input type="checkbox">').attr('id', `bm-cat-${cat.id}`).prop('checked', checkedDefault);
         $row.append($cb);
         const $label = $('<span class="bm-catlabel">').append($('<span class="bm-catname">').text(tr(cat.id)));
-        if (cat.private) $label.append($('<span class="bm-tag danger">').text(tr('private')));
         $row.append($label);
         $row.append($('<span class="bm-count">').attr('id', `bm-count-${cat.id}`).text('—'));
-        $list.append($row);
+        if (['characters', 'chats', 'user-images'].includes(cat.id)) {
+            const { $choose, $options } = buildPicker(cat.id);
+            $list.append($('<div class="bm-catrow bm-picker-row">').append($row.removeClass('bm-catrow'), $choose), $options);
+        } else $list.append($row);
     }
     $tab.append($list);
 
-    $tab.append($('<div class="bm-excluded">').text(tr('excluded')));
-    const $settings = $('<div class="bm-settings">');
-    $settings.append($('<label for="bm-size-limit">').text(tr('limit')));
-    $settings.append($('<input id="bm-size-limit" type="number" min="32" max="2048" step="1" inputmode="numeric" aria-describedby="bm-limit-hint">').val(preferences().maxMiB ?? 256));
-    $settings.append($('<small id="bm-limit-hint">').text(tr('limitHint')));
-    $tab.append($settings);
 
     const $actions = $('<div class="bm-actions">');
-    $actions.append(button('bm-export-go', 'export').addClass('primary'), button('bm-verify-btn', 'verify'), button('bm-cancel-btn', 'cancel').addClass('danger').hide());
+    $actions.append(button('bm-export-go', 'export').addClass('primary'), button('bm-cancel-btn', 'cancel').addClass('danger').hide());
     $tab.append($actions);
+    $tab.append(buildTransferTools());
 
     $tab.append('<div id="bm-progress"><div id="bm-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="bm-bar-fill"></div></div></div>');
     $tab.find('#bm-bar').attr('aria-label', tr('export'));
-    $tab.append('<p id="bm-status" role="status" aria-live="polite" aria-atomic="true"></p><p id="bm-last-download" class="bm-intro"></p><details id="bm-report" hidden></details>');
+    $tab.append('<p id="bm-status" role="status" aria-live="polite" aria-atomic="true"></p>');
     return $tab;
 }
 
@@ -888,61 +845,154 @@ function button(id, key) {
     return $('<button type="button" class="bm-btn">').attr('id', id).text(tr(key));
 }
 
-// ─── Verify backup ───
-// Read-only integrity check of a user-chosen ZIP: the manifest parses, every
-// listed file is present, and each sha256 still matches. Writes nothing.
-async function verifyBackup() {
-    if (operation) { exportUi.status(tr('busy')); return; }
-    const revision = lifecycle;
-    const input = Object.assign(document.createElement('input'), { type: 'file', accept: '.zip' });
-    input.onchange = async () => {
-        if (revision !== lifecycle) return;
-        const file = input.files?.[0];
-        if (!file) return;
+function buildTransferTools() {
+    const $tools = $('<details class="bm-transfer">').append($('<summary>').append('<i class="fa-solid fa-folder-open" aria-hidden="true"></i>', $('<span>').text(tr('transferTools')), '<i class="fa-solid fa-chevron-down bm-chevron" aria-hidden="true"></i>'));
+    const $input = $('<input type="file" multiple hidden accept=".png,.json">');
+    const $import = button('bm-import-cards', 'importCards');
+    async function importCards(files) {
+        const cards = Array.from(files).filter(f => /\.(png|json)$/i.test(f.name));
+        if (!cards.length) { exportUi.status(tr('pickCards')); return; }
         if (!beginOperation(exportUi)) return;
         const job = operation;
         try {
-            if (!(await ensureZip())) throw new Error(tr('zipMissing'));
+            $('#bm-cancel-btn').hide();
+            const { processDroppedFiles } = await import('../../../../script.js');
             checkCancelled();
-            const entries = await inspectZip(file, job.maxBytes);
+            const typed = cards.map(f => {
+                const type = /\.png$/i.test(f.name) ? 'image/png' : 'application/json';
+                return f.type === type ? f : new File([f], f.name, {type});
+            });
+            await processDroppedFiles(typed);
+            if (enabled) exportUi.status(tr('importFinished'));
+        } catch (error) { if (!job.controller.signal.aborted) exportUi.error(tr('failed', redact(error.message))); }
+        finally { endOperation(job, exportUi); }
+    }
+    $input.on('change.bm', event => { const files = Array.from(event.target.files); event.target.value = ''; if (files.length) void importCards(files); });
+    $import.on('click.bm', () => $input[0].click()).on('dragover.bm drop.bm', e => {
+        e.preventDefault(); e.stopPropagation();
+        if (e.type === 'drop') void importCards(e.originalEvent.dataTransfer.files);
+    });
+    const $chat = button('bm-download-chat', 'downloadChat').on('click.bm', async () => {
+        if (!beginOperation(exportUi)) return;
+        const job = operation;
+        try {
+            const id = ctx.getCurrentChatId?.();
+            const group = ctx.groupId != null && ctx.groupId !== '';
+            const avatar = ctx.characters?.[ctx.characterId]?.avatar;
+            if (!id || (!group && !avatar)) { exportUi.status(tr('openChat')); return; }
+            const file = `${String(id).replace(/\.jsonl$/i, '')}.jsonl`;
+            const data = await postJson('/api/chats/export', {file, avatar_url: group ? '' : avatar, is_group: group, format: 'jsonl', exportfilename: 'backup.jsonl'});
             checkCancelled();
-            const zip = await JSZip.loadAsync(file);
-            for (const [path, entry] of Object.entries(zip.files)) {
-                const name = entry.dir ? path.replace(/\/$/, '') : path;
-                if (!validPath(name) || (entry.unsafeOriginalName && entry.unsafeOriginalName !== path) || (!entry.dir && !entries.has(path))) throw new Error('ZIP paths changed while loading');
-            }
-            const mf = zip.file('backup-manifest.json');
-            const manifest = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(await readZipEntry(mf, MAX_METADATA, job.controller.signal)));
-            const manifestPaths = validateManifest(manifest, job.maxBytes);
-            let okHash = 0, badHash = 0, missing = 0, unchecked = 0;
-            const unexpected = [...entries.keys()].filter(path => !manifestPaths.has(pathKey(path))).length;
-            for (let i = 0; i < manifest.perFile.length; i++) {
-                checkCancelled();
-                const pf = manifest.perFile[i];
-                exportUi.status(tr('verifyProgress', i + 1, manifest.perFile.length));
-                exportUi.progress(Math.round(i / manifest.perFile.length * 100));
-                const entry = zip.file(pf.path);
-                if (!entry) { missing++; continue; }
-                if (entries.get(pf.path) !== pf.size) { badHash++; continue; }
-                const buf = await readZipEntry(entry, pf.size, job.controller.signal);
-                if (buf.byteLength !== pf.size) { badHash++; continue; }
-                if (pf.hash && globalThis.crypto?.subtle) {
-                    if (await sha256(buf) === pf.hash) okHash++; else badHash++;
-                } else unchecked++;
-            }
-            checkCancelled();
-            if (missing || badHash || unexpected) exportUi.error(tr('problems', missing, badHash, unexpected));
-            else if (unchecked) exportUi.warn(tr('unverified', unchecked));
-            else exportUi.success(tr('verified', okHash));
-        } catch (error) {
-            if (job.controller.signal.aborted || error.name === 'AbortError') exportUi.status(tr('cancelled'));
-            else { exportUi.error(tr('failed', redact(error.message))); warn('verify', error); }
-        } finally { endOperation(job, exportUi); }
-    };
-    input.click();
+            if (typeof data?.result !== 'string') throw new Error('Invalid chat export');
+            downloadBlob(new Blob([data.result]), sanitize(file));
+            exportUi.status(tr('chatDownloaded'));
+        } catch (error) { if (!job.controller.signal.aborted) exportUi.error(tr('failed', redact(error.message))); }
+        finally { endOperation(job, exportUi); }
+    });
+    const $actions = $('<div class="bm-actions">').append($input, $import, $chat);
+    if (typeof window.showDirectoryPicker === 'function') $actions.append(button('bm-save-folder', 'saveFolder').on('click.bm', async () => {
+        const ids = getSelectedExportIds();
+        if (!ids.length) { exportUi.status(tr('select')); return; }
+        try { const dir = await window.showDirectoryPicker({mode: 'readwrite'}); if (enabled) await runExport(ids, exportUi, dir); }
+        catch (error) { if (error.name !== 'AbortError') exportUi.error(tr('failed', redact(error.message))); }
+    }));
+    return $tools.append($('<div class="bm-transfer-body">').append($('<p class="bm-transfer-hint">').text(tr('transferHint')), $actions));
 }
 
 // ─── Panel mount ───
+function buildPicker(category) {
+    const gallery = category === 'user-images', chats = category === 'chats';
+    const key = gallery ? 'galleryFolders' : chats ? 'chatAvatars' : 'cardAvatars';
+    const selected = () => preferences()[key];
+    const save = (ids, singleChat = null) => savePreferences({ [key]: ids, ...(chats ? { singleChat } : {}) });
+    const id = `bm-${category}-picker`, title = tr(gallery ? 'chooseFolders' : 'chooseCards');
+    const $choose = button(`${id}-open`, 'all').addClass('bm-picker-open').attr({ title, 'aria-label': title, 'aria-expanded': 'false', 'aria-controls': id }).empty().append(`<i class="fa-solid ${gallery ? 'fa-folder-tree' : 'fa-address-card'}" aria-hidden="true"></i>`);
+    const $all = button(`${id}-toggle`, 'all').addClass('bm-picker-toggle');
+    const $options = $('<div class="bm-picker">').attr('id', id).hide();
+    const searchLabel = tr(gallery ? 'findFolder' : 'findCard');
+    const $search = $('<input type="search" class="text_pole">').attr({placeholder: searchLabel, 'aria-label': searchLabel});
+    const labels = new Map(), tags = new Map();
+    const $scope = $('<small class="bm-scope">');
+    const $rows = $('<div class="bm-folder-rows">');
+    let names = [], matches = [], rendered = 0, chosen = new Set();
+    let all = false;
+    function syncToggle() { $all.text(tr(all ? 'none' : 'all')); }
+    function appendBatch() {
+        const fragment = document.createDocumentFragment();
+        for (const name of matches.slice(rendered, rendered + 32)) {
+            const $cb = $('<input type="checkbox">').val(name).prop('checked', all || chosen.has(name));
+            const $label = $('<label>').attr('title', name).append($cb);
+            if (!gallery) $label.append($('<img alt="" loading="lazy" decoding="async" width="24" height="24">').attr('src', `/thumbnail?type=avatar&file=${encodeURIComponent(name)}`));
+            fragment.append($label.append($('<span>').text(labels.get(name) || name))[0]);
+            rendered++;
+        }
+        $rows.append(fragment);
+    }
+    function draw() {
+        rendered = 0; $rows.empty().scrollTop(0); appendBatch();
+    }
+    $rows.on('scroll.bm', ({ currentTarget: el }) => {
+        if (rendered < matches.length && el.scrollHeight - el.scrollTop - el.clientHeight < 88) appendBatch();
+    });
+    const $pickMatches = button(`${id}-matches`, 'pickMatches').hide();
+    $search.on('input.bm', () => { const q = $search.val().trim().toLowerCase(); matches = q ? names.filter(name => q.startsWith('#') && !gallery ? tags.get(name)?.some(tag => tag.toLowerCase().includes(q.slice(1))) : `${name} ${labels.get(name) || ''}`.toLowerCase().includes(q)) : names; $pickMatches.toggle(!gallery && !!q && matches.length > 0); draw(); });
+    $pickMatches.on('click.bm', () => { chosen = new Set(matches); all = chosen.size === names.length; save(all ? null : [...chosen]); $scope.empty(); syncToggle(); draw(); });
+    $all.on('click.bm', () => {
+        all = !all;
+        save(all ? null : []); $scope.empty();
+        chosen.clear(); syncToggle(); draw();
+    });
+    $choose.on('click.bm', async () => {
+        if ($options.is(':visible')) {
+            $options.hide(); $rows.empty(); names = []; matches = []; chosen.clear(); labels.clear(); tags.clear();
+            $choose.attr('aria-expanded', 'false'); return;
+        }
+        if (!beginOperation(exportUi)) return;
+        const job = operation;
+        try {
+            labels.clear(); tags.clear(); $pickMatches.hide();
+            if (!gallery) for (const c of ctx.characters ?? []) { if (c?.avatar) { labels.set(c.avatar, c.name || c.avatar); tags.set(c.avatar, Array.isArray(c.tags) ? c.tags.filter(tag => typeof tag === 'string') : []); } }
+            names = gallery ? await galleryFolders(false) : [...labels.keys()];
+            $scope.text(chats ? preferences().singleChat?.file || '' : '');
+            checkCancelled();
+            const saved = selected();
+            const savedNames = new Set(saved ?? []);
+            chosen = new Set(names.filter(name => savedNames.has(name)));
+            all = !Array.isArray(saved) || (names.length > 0 && chosen.size === names.length);
+            matches = names.sort(); $search.val(''); syncToggle(); draw();
+            $options.show(); $choose.attr('aria-expanded', 'true');
+        } catch (error) { if (!job.controller.signal.aborted) exportUi.error(tr('failed', redact(error.message))); }
+        finally { endOperation(job, exportUi); }
+    });
+    $rows.on('change.bm', 'input', event => {
+        if (all) chosen = new Set(names);
+        const { checked, value } = event.target;
+        if (checked) chosen.add(value); else chosen.delete(value);
+        all = chosen.size === names.length;
+        save(all ? null : [...chosen]); $scope.empty();
+        syncToggle();
+    });
+    const $toolbar = $('<div class="bm-folder-toolbar">').append($search, $all);
+    $options.append($toolbar, $rows);
+    if (!gallery) {
+        const shortcut = (onlyChat) => button(`${id}-${onlyChat ? 'chat' : 'card'}`, onlyChat ? 'thisChat' : 'thisCard').on('click.bm', () => {
+            const live = SillyTavern.getContext();
+            const avatar = live.characters?.[live.characterId]?.avatar;
+            const chat = onlyChat && live.getCurrentChatId?.();
+            if (live.groupId != null && live.groupId !== '' || !avatar || !names.includes(avatar) || onlyChat && !chat) { exportUi.status(tr('openSolo')); return; }
+            chosen = new Set([avatar]); all = false;
+            const file = onlyChat ? `${String(chat).replace(/\.jsonl$/i, '')}.jsonl` : '';
+            save([avatar], onlyChat ? {avatar, file} : null); $scope.text(file);
+            $search.val(''); $pickMatches.hide(); matches = names; syncToggle(); draw();
+        });
+        $toolbar.append(shortcut(false).addClass('bm-picker-toggle'));
+        const $quick = $('<div class="bm-quick">');
+        if (chats) $quick.append(shortcut(true), $scope);
+        $rows.before($quick.append($pickMatches));
+    }
+    return { $choose, $options };
+}
+
 function buildUI() {
     const $root = $('<div id="bm-root">').attr('data-bm-build', buildMarker());
     const $drawer = $('<div class="inline-drawer">');
@@ -957,31 +1007,29 @@ function buildUI() {
     $root.append($drawer);
     $('#extensions_settings2').append($root);
 
-    const persist = () => savePreferences({ selectedCategories: getSelectedExportIds() });
-    $('#bm-sel-all,#bm-sel-none,#bm-sel-rec').on('click.bm', event => {
-        for (const cat of REGISTRY) $(`#bm-cat-${cat.id}`).prop('checked', event.currentTarget.id === 'bm-sel-all' || (event.currentTarget.id === 'bm-sel-rec' && Boolean(cat.defaultEnabled)));
+    const persist = () => {
+        const ids = getSelectedExportIds();
+        savePreferences({ selectedCategories: ids });
+        $('#bm-sel-toggle').text(tr(ids.length === REGISTRY.length ? 'none' : 'all'));
+    };
+    $('#bm-sel-toggle').text(tr(getSelectedExportIds().length === REGISTRY.length ? 'none' : 'all')).on('click.bm', () => {
+        const checked = getSelectedExportIds().length !== REGISTRY.length;
+        $('#bm-root .bm-catrow input').prop('checked', checked);
         persist();
     });
-    $('#bm-root input[type="checkbox"]').on('change.bm', persist);
-    $('#bm-size-limit').on('change.bm', () => {
-        const maxMiB = Math.round(byteLimit() / 1048576);
-        $('#bm-size-limit').val(maxMiB);
-        savePreferences({ maxMiB });
-    });
+    $('.bm-catrow input', '#bm-root').on('change.bm', persist);
     $('#bm-refresh-counts').on('click.bm', refreshCounts);
     $('#bm-export-go').on('click.bm', async () => {
         const ids = getSelectedExportIds();
         if (!ids.length) { exportUi.error(tr('select')); return; }
         await runExport(ids, exportUi);
     });
-    $('#bm-verify-btn').on('click.bm', verifyBackup);
     $('#bm-cancel-btn').on('click.bm', () => { operation?.controller.abort(); exportUi.status(tr('cancelling')); });
     renderLastDownload();
 }
 
 export function initialize() {
     if (enabled || document.getElementById('bm-root')) return;
-    lifecycle++;
     enabled = true;
     buildUI();
     $('#bm-root button,#bm-root input').prop('disabled', true);
@@ -997,7 +1045,6 @@ function onReady() {
 }
 
 export function cleanup() {
-    lifecycle++;
     enabled = false;
     operation?.controller.abort();
     readySource?.removeListener(ctx.eventTypes.APP_READY, onReady);
